@@ -10,5 +10,12 @@
  */
 package common;
 
-public interface Channel {
+import java.io.Closeable;
+import java.io.IOException;
+
+public interface Channel extends Closeable {
+    void sendLine(String line) throws IOException;
+    String readLine() throws IOException;                 // null khi bên kia đã đóng
+    void sendBytes(byte[] buf, int off, int len) throws IOException;
+    void readFully(byte[] buf, int off, int len) throws IOException;   // đọc đủ len byte
 }

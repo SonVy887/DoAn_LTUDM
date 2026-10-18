@@ -7,5 +7,14 @@
  */
 package server;
 
+import server.model.User;
+
 public class Session {
+    public User user;               // null nếu chưa đăng nhập
+    public boolean anonymous;
+    public String cwd = "/";        // thư mục hiện tại, tính từ gốc của user
+
+    public boolean isLoggedIn() {
+        return user != null || anonymous;
+    }
 }

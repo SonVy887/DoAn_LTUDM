@@ -57,10 +57,9 @@ public final class Protocol {
     public static final int INVALID_ARGUMENT = 501;
     public static final int NOT_LOGGED_IN = 530;
     public static final int ACCESS_DENIED = 550;
-
+    public static final int NOT_ACTIVATED = 532;   // đúng mật khẩu nhưng chưa nhập OTP
     // ===== TẠO REQUEST =====
 
-    @SuppressWarnings("unchecked")
     public static JSONObject createRequest(
             String command,
             JSONObject data
@@ -75,7 +74,6 @@ public final class Protocol {
 
     // ===== TẠO RESPONSE =====
 
-    @SuppressWarnings("unchecked")
     public static JSONObject createResponse(int code, String message) {
         JSONObject response = new JSONObject();
 
@@ -87,7 +85,7 @@ public final class Protocol {
 
     // ===== RESPONSE KÈM DỮ LIỆU =====
 
-    @SuppressWarnings("unchecked")
+
     public static JSONObject createResponse(
             int code,
             String message,
@@ -98,6 +96,16 @@ public final class Protocol {
         response.put("data", data);
 
         return response;
+    }
+
+    // Phản hồi thành công, mã 200
+    public static JSONObject ok(String message) {
+        return createResponse(OK, message);
+    }
+
+    // Phản hồi lỗi với mã tùy chọn (501, 530, 550, 451...)
+    public static JSONObject error(int code, String message) {
+        return createResponse(code, message);
     }
 }
 

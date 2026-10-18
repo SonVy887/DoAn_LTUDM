@@ -8,6 +8,8 @@
  */
 package client;
 
+import common.Channel;
+import common.PlainChannel;
 import common.Protocol;
 import org.json.JSONObject;
 
@@ -16,83 +18,36 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 public class FTPClient {
-
     private Socket socket;
-    private BufferedReader reader;
-    private PrintWriter writer;
+    private Channel channel;
 
     public void connect(String host, int port) throws IOException {
-        if (socket != null && !socket.isClosed()) {
-            return;
-        }
-
+        if (socket != null && !socket.isClosed()) return;
         socket = new Socket(host, port);
-
-        reader = new BufferedReader(
-                new InputStreamReader(
-                        socket.getInputStream(),
-                        StandardCharsets.UTF_8
-                )
-        );
-
-        writer = new PrintWriter(
-                new OutputStreamWriter(
-                        socket.getOutputStream(),
-                        StandardCharsets.UTF_8
-                ), true
-        );
+        channel = new PlainChannel(socket);
     }
 
-    public synchronized JSONObject sendRequest(JSONObject request)
-            throws IOException {
-
-        if (socket == null || socket.isClosed()) {
-            throw new IOException("Chưa kết nối đến Server");
-        }
-
-        writer.println(request.toString());
-
-        if (writer.checkError()) {
-            throw new IOException("Không gửi được request");
-        }
-
-        String response = reader.readLine();
-
-        if (response == null) {
-            throw new EOFException("Server đã đóng kết nối");
-        }
-
+    public synchronized JSONObject sendRequest(JSONObject request) throws IOException {
+        if (channel == null) throw new IOException("Chưa kết nối đến Server");
+        channel.sendLine(request.toString());
+        String response = channel.readLine();
+        if (response == null) throw new EOFException("Server đã đóng kết nối");
         return new JSONObject(response);
     }
 
-    public JSONObject login(String email, String password)
-            throws IOException {
-
-        JSONObject data = new JSONObject();
-        data.put("email", email);
-        data.put("password", password);
-
-        JSONObject request = Protocol.createRequest(
-                Protocol.LOGIN, data
-        );
-
-        return sendRequest(request);
+    public JSONObject login(String email, String password) throws IOException {
+        JSONObject data = new JSONObject().put("email", email).put("password", password);
+        return sendRequest(Protocol.createRequest(Protocol.LOGIN, data));
     }
 
     public JSONObject register(JSONObject data) throws IOException {
-        return sendRequest(
-                Protocol.createRequest(Protocol.REGISTER, data)
-        );
+        return sendRequest(Protocol.createRequest(Protocol.REGISTER, data));
     }
 
     public void disconnect() throws IOException {
-        if (socket != null) {
-            socket.close();
-        }
-
+        if (channel != null) channel.close();
+        channel = null;
         socket = null;
-        reader = null;
-        writer = null;
     }
 }
 

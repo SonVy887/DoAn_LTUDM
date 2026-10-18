@@ -9,220 +9,138 @@
  */
 package server;
 
+import common.Channel;
+import common.PlainChannel;
 import common.Protocol;
-import org.json.JSONObject;
 import org.json.JSONException;
-import server.model.User;
+import org.json.JSONObject;
 import server.service.AuthService;
 
+import javax.security.auth.login.FailedLoginException;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
-public class ClientHandler implements Runnable{
-    private Socket clientSocket;
+public class ClientHandler implements Runnable {
+    private Channel channel;
+    @FunctionalInterface
+    private interface Command {
+        JSONObject execute(JSONObject data) throws Exception;
+    }
+
+    // Các lệnh được dùng khi chưa đăng nhập
+    private static final Set<String> PUBLIC_COMMANDS = Set.of(
+            Protocol.REGISTER, Protocol.VERIFY_OTP, Protocol.RESEND_OTP,
+            Protocol.LOGIN, Protocol.LOGIN_ANON, Protocol.QUIT);
+
+    private final Socket socket;
+    private final Session session = new Session();
     private final AuthService authService = new AuthService();
-    private User currentUser; //user da dang nhap
+    private final Map<String, Command> commands = new HashMap<>(); // Cac lenh
+    private boolean running = true;
 
-    public ClientHandler(Socket clientSocket) {
-        this.clientSocket = clientSocket;
+    public ClientHandler(Socket socket) {
+        this.socket = socket;
+
+        // Thêm lệnh mới = thêm 1 dòng ở đây + 1 hàm cmdXxx bên dưới
+        commands.put(Protocol.REGISTER, this::cmdRegister);
+        commands.put(Protocol.LOGIN, this::cmdLogin);
+        commands.put(Protocol.QUIT, this::cmdQuit);
     }
 
     @Override
     public void run() {
-        String threadName = Thread.currentThread().getName();
-        System.out.println("[" + threadName + "] Bắt đầu xử lý client: " +
-                clientSocket.getInetAddress().getHostAddress());
+        String ip = socket.getInetAddress().getHostAddress();
+        System.out.println("[+] Client kết nối: " + ip);
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-             PrintWriter writer = new PrintWriter(clientSocket.getOutputStream(), true)) {
-            String clientMessage;
-
-            while ((clientMessage = reader.readLine()) != null) {
-
-                try {
-                    JSONObject request = new JSONObject(clientMessage);
-
-                    String command = request.optString("command", "")
-                            .toUpperCase(Locale.ROOT);
-
-                    JSONObject data = request.optJSONObject("data");
-
-                    if (data == null) {
-                        data = new JSONObject();
-                    }
-
-                    boolean keepRunning = handleCommand(command, data, writer);
-
-                    if (!keepRunning) {
-                        break;
-                    }
-
-                } catch (JSONException e) {
-                    sendResponse(writer, Protocol.BAD_REQUEST, "JSON không hợp lệ");
-                }
+        try (Channel ch = new PlainChannel(socket)) {
+            this.channel = ch;
+            String line;
+            while (running && (line = ch.readLine()) != null) {
+                if (line.isBlank()) continue;
+                ch.sendLine(process(line).toString());   // chỗ DUY NHẤT gửi phản hồi
             }
-        }catch(IOException ex) {
-            System.err.println("[" + threadName + "] Lỗi I/O khi giao tiếp với client " +
-                    clientSocket.getInetAddress().getHostAddress() + ": " + ex.getMessage());
-        }finally {
-            try {
-                if (clientSocket != null && !clientSocket.isClosed()) {
-                    clientSocket.close();
-                    System.out.println("[" + threadName + "] Đã đóng kết nối với client: " +
-                            clientSocket.getInetAddress().getHostAddress());
-                }
-            } catch (IOException e) {
-                System.err.println("[" + threadName + "] Lỗi khi đóng socket của client " +
-                        clientSocket.getInetAddress().getHostAddress() + ": " + e.getMessage());
-            }
-            System.out.println("[" + threadName + "] Kết thúc xử lý client: " +
-                    clientSocket.getInetAddress().getHostAddress());
+        } catch (IOException e) {
+            System.err.println("[!] Mất kết nối " + ip + ": " + e.getMessage());
+        } finally {
+            try { socket.close(); } catch (IOException ignored) {}
+            System.out.println("[-] Client ngắt: " + ip);
         }
     }
 
-    private boolean handleCommand(String command, JSONObject args, PrintWriter writer){
-        switch (command) {
-            // ===== TÀI KHOẢN =====
-            case "REGISTER":
-                cmdRegister(args, writer);
-                break;
-
-            case "VERIFY_OTP":
-                //cmdVerifyOtp(args, writer);
-                break;
-
-            case "LOGIN":
-                cmdLogin(args, writer);
-                break;
-
-            case "LOGIN_ANON":
-                //cmdLoginAnon(writer);
-                break;
-
-            // ===== QUẢN LÝ FILE =====
-
-            case "LIST":
-                //cmdList(writer);
-                break;
-
-            case "CWD":
-                //cmdCwd(args, writer);
-                break;
-
-            case "MKD":
-                //cmdMkd(args, writer);
-                break;
-
-            case "UPLOAD":
-                //cmdUpload(args, writer);
-                break;
-
-            case "DOWNLOAD":
-                //cmdDownload(args, writer);
-                break;
-
-            // ===== CHIA SẺ FILE =====
-
-            case "SHARE":
-                //cmdShare(args, writer);
-                break;
-
-            case "SHARED":
-                //cmdShared(writer);
-                break;
-
-            // ===== NGẮT KẾT NỐI =====
-
-            case "QUIT":
-                writer.println("221 Goodbye");
-                return false;
-
-            default:
-                writer.println("500 Unknown command");
-                break;
-        }
-        return true;
-    }
-
-    private void cmdRegister(JSONObject data, PrintWriter writer) {
+    // Nhận 1 dòng, luôn trả về đúng 1 phản hồi (kể cả khi lỗi)
+    private JSONObject process(String line) {
         try {
-            String email = data.optString("email", "");
-            String password = data.optString("password", "");
-            String fullName = data.optString("fullName", "");
-            String gender = data.optString("gender", "");
-            String birthDateStr = data.optString("birthDate", "");
+            JSONObject request = new JSONObject(line);
+            String command = request.optString("command", "").toUpperCase(Locale.ROOT);
+            JSONObject data = request.optJSONObject("data");
+            if (data == null) data = new JSONObject();
 
-            LocalDate birthDate = birthDateStr.isBlank()
-                    ? null
-                    : LocalDate.parse(birthDateStr);
-
-            String result = authService.register(
-                    email, password, fullName, gender, birthDate
-            );
-
-            if (result == null) {
-                sendResponse(writer, Protocol.OK,
-                        "Đã tạo tài khoản, chưa xác thực OTP");
-            } else {
-                sendResponse(writer, Protocol.BAD_REQUEST, result);
+            Command cmd = commands.get(command);
+            if (cmd == null) {
+                return Protocol.error(Protocol.UNKNOWN_COMMAND, "Lệnh không hỗ trợ: " + command);
             }
-
-        } catch (DateTimeParseException e) {
-            sendResponse(writer, Protocol.INVALID_ARGUMENT,
-                    "Ngày sinh không hợp lệ");
-
-        } catch (SQLException e) {
-            System.err.println("REGISTER SQL Error: " + e.getMessage());
-            sendResponse(writer, Protocol.SERVER_ERROR,
-                    "Lỗi cơ sở dữ liệu");
-        }
-    }
-
-    private void cmdLogin(JSONObject data, PrintWriter writer) {
-
-        String email = data.optString("email", "");
-        String password = data.optString("password", "");
-
-        try {
-            User user = authService.login(email, password);
-
-            if (user == null) {
-                sendResponse(
-                        writer,
-                        Protocol.NOT_LOGGED_IN,
-                        "Đăng nhập thất bại. Kiểm tra thông tin hoặc trạng thái tài khoản."
-                );
-                return;
+            if (!session.isLoggedIn() && !PUBLIC_COMMANDS.contains(command)) {
+                return Protocol.error(Protocol.NOT_LOGGED_IN, "Chưa đăng nhập");
             }
+            return cmd.execute(data);
 
-            // Lưu User vào phiên kết nối hiện tại
-            currentUser = user;
-
-            sendResponse(
-                    writer,
-                    Protocol.LOGIN_SUCCESS,
-                    "Đăng nhập thành công"
-            );
-
+        } catch (JSONException e) {
+            return Protocol.error(Protocol.BAD_REQUEST, "JSON không hợp lệ");
+        } catch (IllegalArgumentException e) {      // dữ liệu sai, email trùng
+            return Protocol.error(Protocol.INVALID_ARGUMENT, e.getMessage());
+        } catch (FailedLoginException e) {
+            return Protocol.error(Protocol.NOT_LOGGED_IN, e.getMessage());
+        } catch (SecurityException e) {
+            return Protocol.error(Protocol.ACCESS_DENIED, e.getMessage());
+        } catch (IllegalStateException e) {         // chưa kích hoạt
+            return Protocol.error(Protocol.NOT_ACTIVATED, e.getMessage());
         } catch (SQLException e) {
+            System.err.println("SQL lỗi: " + e.getMessage());
+            return Protocol.error(Protocol.SERVER_ERROR, "Lỗi cơ sở dữ liệu");
+        } catch (Exception e) {
             e.printStackTrace();
-
-            sendResponse(
-                    writer,
-                    Protocol.SERVER_ERROR,
-                    "Lỗi cơ sở dữ liệu"
-            );
+            return Protocol.error(Protocol.SERVER_ERROR, "Lỗi xử lý");
         }
     }
-    private void sendResponse(PrintWriter writer, int code, String message) {
-        JSONObject response = Protocol.createResponse(code, message);
-        writer.println(response.toString());
+
+    // ===== Các lệnh: chỉ lấy dữ liệu, gọi service, trả phản hồi =====
+
+    private JSONObject cmdRegister(JSONObject d) throws Exception {
+        String birth = d.optString("birthDate", "");
+        LocalDate birthDate;
+        try {
+            birthDate = birth.isBlank() ? null : LocalDate.parse(birth);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException("Ngày sinh không hợp lệ");
+        }
+
+        authService.register(
+                d.optString("email", ""), d.optString("password", ""),
+                d.optString("fullName", ""), d.optString("gender", ""), birthDate);
+
+        return Protocol.ok("Đã tạo tài khoản, chưa xác thực OTP");
+    }
+
+    private JSONObject cmdLogin(JSONObject d) throws Exception {
+        session.user = authService.login(
+                d.optString("email", ""), d.optString("password", ""));
+        return Protocol.createResponse(Protocol.LOGIN_SUCCESS, "Đăng nhập thành công");
+    }
+
+    private JSONObject cmdQuit(JSONObject d) {
+        running = false;
+        return Protocol.createResponse(Protocol.GOODBYE, "Tạm biệt");
     }
 }
