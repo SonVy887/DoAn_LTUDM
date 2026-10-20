@@ -44,6 +44,16 @@ public class FTPClient {
         return sendRequest(Protocol.createRequest(Protocol.REGISTER, data));
     }
 
+    public JSONObject verifyOtp(String email, String otp) throws IOException {
+        JSONObject data = new JSONObject().put("email", email).put("otp", otp);
+        return sendRequest(Protocol.createRequest(Protocol.VERIFY_OTP, data));
+    }
+
+    public JSONObject resendOtp(String email) throws IOException {
+        JSONObject data = new JSONObject().put("email", email);
+        return sendRequest(Protocol.createRequest(Protocol.RESEND_OTP, data));
+    }
+
     public void disconnect() throws IOException {
         if (channel != null) channel.close();
         channel = null;

@@ -118,6 +118,18 @@ public class LoginFrame extends JFrame {
 
                         // Sau này mở MainFrame tại đây.
 
+                    } else if (code == Protocol.NOT_ACTIVATED) {
+                        // Đúng mật khẩu nhưng chưa nhập OTP: mở cửa sổ nhập mã
+                        JOptionPane.showMessageDialog(
+                                LoginFrame.this,
+                                message,
+                                "Chưa kích hoạt",
+                                JOptionPane.INFORMATION_MESSAGE
+                        );
+                        RegisterDialog.showOtpDialog(
+                                LoginFrame.this, ftpClient, email
+                        );
+
                     } else {
                         JOptionPane.showMessageDialog(
                                 LoginFrame.this,
@@ -171,4 +183,3 @@ public class LoginFrame extends JFrame {
         });
     }
 }
-

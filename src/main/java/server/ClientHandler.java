@@ -57,6 +57,8 @@ public class ClientHandler implements Runnable {
         commands.put(Protocol.REGISTER, this::cmdRegister);
         commands.put(Protocol.LOGIN, this::cmdLogin);
         commands.put(Protocol.QUIT, this::cmdQuit);
+        commands.put(Protocol.VERIFY_OTP, this::cmdVerifyOtp);
+        commands.put(Protocol.RESEND_OTP, this::cmdResendOtp);
     }
 
     @Override
@@ -131,6 +133,15 @@ public class ClientHandler implements Runnable {
                 d.optString("fullName", ""), d.optString("gender", ""), birthDate);
 
         return Protocol.ok("Đã tạo tài khoản, chưa xác thực OTP");
+    }
+    private JSONObject cmdVerifyOtp(JSONObject d) throws Exception {
+        authService.verifyOtp(d.optString("email", ""), d.optString("otp", ""));
+        return Protocol.ok("Xác thực thành công, bạn có thể đăng nhập");
+    }
+
+    private JSONObject cmdResendOtp(JSONObject d) throws Exception {
+        authService.resendOtp(d.optString("email", ""));
+        return Protocol.ok("Đã gửi lại mã OTP");
     }
 
     private JSONObject cmdLogin(JSONObject d) throws Exception {

@@ -7,6 +7,7 @@
  */
 package server.service;
 
+import jakarta.mail.MessagingException;
 import server.dao.UserDAO;
 import server.model.User;
 import server.security.InputValidator;
@@ -18,10 +19,10 @@ import java.time.LocalDate;
 import java.util.Locale;
 
 public class AuthService {
-    private final UserDAO userDAO = new UserDAO();
-
+    private UserDAO userDAO = new UserDAO();
+    private OtpService otpService = new OtpService();
     public void register(String email, String password, String fullName,
-                         String gender, LocalDate birthDate) throws SQLException {
+                         String gender, LocalDate birthDate) throws SQLException, MessagingException {
 
         email = normalize(email);
         fullName = fullName == null ? "" : fullName.trim();
@@ -41,7 +42,7 @@ public class AuthService {
             // 2 người đăng ký cùng email cùng lúc: DB chặn bằng UNIQUE
             throw bad("Email đã được đăng ký");
         }
-        // TODO: otpService.sendOtp(email);
+        otpService.generateAndSend(email);
     }
 
     public User login(String email, String password) throws SQLException {
@@ -54,6 +55,15 @@ public class AuthService {
         if (!u.active) throw new IllegalStateException("Tài khoản chưa kích hoạt, hãy xác thực OTP");
         if (u.blocked) throw new SecurityException("Tài khoản đã bị khóa");
         return u;
+    }
+    public void verifyOtp(String email, String code) throws SQLException {
+        email = normalize(email);
+        otpService.verifyOtp(email, code);   // sai thì tự ném lỗi, dừng tại đây
+        userDAO.activateUser(email);      // đến được đây là mã đúng
+    }
+
+    public void resendOtp(String email) throws MessagingException {
+        otpService.generateAndSend(normalize(email));
     }
 
     private static String normalize(String s) {

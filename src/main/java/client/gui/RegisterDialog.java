@@ -1,7 +1,7 @@
 // ===== RegisterDialog.java =====
 /**
  * LÀM GÌ: Form đăng ký + bước nhập mã OTP.
- * GỌI TỚI: FTPClient (register, verifyOtp).
+ * GỌI TỚI: FTPClient (register, verifyOtp, resendOtp).
  * ĐƯỢC GỌI TỪ: LoginFrame.
  * YÊU CẦU ĐỀ: tạo tài khoản mới với xác thực OTP. Bước 9 (OTP ở bước 7).
  */
@@ -17,6 +17,8 @@ import java.awt.*;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Date;
+import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 public class RegisterDialog extends JFrame {
 
@@ -168,7 +170,7 @@ public class RegisterDialog extends JFrame {
         data.put("birthDate", birthDate.toString());
 
         btnRegister.setEnabled(false);
-
+        btnRegister.setText("Đang gửi mã...");
         SwingWorker<JSONObject, Void> worker = new SwingWorker<>() {
 
             @Override
@@ -185,7 +187,7 @@ public class RegisterDialog extends JFrame {
             @Override
             protected void done() {
                 btnRegister.setEnabled(true);
-
+                btnRegister.setText("Đăng ký");
                 try {
                     JSONObject response = get();
 
@@ -201,11 +203,9 @@ public class RegisterDialog extends JFrame {
                                 JOptionPane.INFORMATION_MESSAGE
                         );
 
-                        // Khi có OTPVerificationFrame:
-                        // new OTPVerificationFrame(
-                        //         ftpClient, email
-                        // ).setVisible(true);
-                        // dispose();
+                        // Mở cửa sổ nhập mã OTP, đóng form đăng ký khi xong
+                        showOtpDialog(RegisterDialog.this, ftpClient, email);
+                        dispose();
 
                     } else {
                         JOptionPane.showMessageDialog(
@@ -228,5 +228,95 @@ public class RegisterDialog extends JFrame {
         };
 
         worker.execute();
+    }
+
+    // Gọi server ở luồng nền, xong thì xử lý phản hồi trên luồng giao diện
+    private static void callServer(Component parent, Callable<JSONObject> call,
+                                   Consumer<JSONObject> onResponse) {
+        new SwingWorker<JSONObject, Void>() {
+            @Override
+            protected JSONObject doInBackground() throws Exception {
+                return call.call();
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    onResponse.accept(get());
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(
+                            parent,
+                            "Lỗi: " + ex.getMessage(),
+                            "Lỗi",
+                            JOptionPane.ERROR_MESSAGE
+                    );
+                }
+            }
+        }.execute();
+    }
+
+    // Cửa sổ nhập mã OTP; dùng cho cả đăng ký và đăng nhập khi chưa kích hoạt
+    public static void showOtpDialog(Component parent, FTPClient ftpClient, String email) {
+        Window owner = parent instanceof Window
+                ? (Window) parent
+                : SwingUtilities.getWindowAncestor(parent);
+
+        JDialog dialog = new JDialog(
+                owner, "Xác thực OTP", Dialog.ModalityType.APPLICATION_MODAL
+        );
+
+        JTextField txtOtp = new JTextField();
+        JButton btnVerify = new JButton("Xác nhận");
+        JButton btnResend = new JButton("Gửi lại mã");
+
+        JPanel buttons = new JPanel(new GridLayout(1, 2, 10, 0));
+        buttons.add(btnResend);
+        buttons.add(btnVerify);
+
+        JPanel panel = new JPanel(new GridLayout(3, 1, 10, 10));
+        panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+        panel.add(new JLabel("Nhập mã OTP đã gửi tới " + email));
+        panel.add(txtOtp);
+        panel.add(buttons);
+        dialog.add(panel);
+
+        btnVerify.addActionListener(e -> {
+            String otp = txtOtp.getText().trim();
+
+            if (otp.isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "Vui lòng nhập mã OTP!");
+                return;
+            }
+
+            callServer(dialog, () -> ftpClient.verifyOtp(email, otp), response -> {
+                String message = response.optString("message");
+
+                if (response.optInt("code") == Protocol.OK) {
+                    JOptionPane.showMessageDialog(dialog, message);
+                    dialog.dispose();
+                } else {
+                    JOptionPane.showMessageDialog(
+                            dialog,
+                            message,
+                            "Xác thực thất bại",
+                            JOptionPane.WARNING_MESSAGE
+                    );
+                }
+            });
+        });
+
+        btnResend.addActionListener(e ->
+                callServer(dialog, () -> ftpClient.resendOtp(email), response ->
+                        JOptionPane.showMessageDialog(
+                                dialog, response.optString("message")
+                        )
+                )
+        );
+
+        dialog.getRootPane().setDefaultButton(btnVerify);
+        dialog.pack();
+        dialog.setSize(400, dialog.getHeight());
+        dialog.setLocationRelativeTo(parent);
+        dialog.setVisible(true);
     }
 }
